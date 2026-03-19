@@ -35,7 +35,7 @@ from unitree_sdk2py.core.channel import ChannelSubscriber
 def main():
     parser = argparse.ArgumentParser(description='RH56F1 EtherCAT+DDS Driver - RIGHT')
     parser.add_argument('--ifname', type=str, default='eth0')
-    parser.add_argument('--slave', type=int, default=2)
+    parser.add_argument('--slave', type=int, default=1)
     parser.add_argument('--cycle', type=float, default=2.0)
     args = parser.parse_args()
 

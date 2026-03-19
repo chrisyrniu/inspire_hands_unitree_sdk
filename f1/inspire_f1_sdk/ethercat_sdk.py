@@ -27,7 +27,10 @@ from .registers import (
     decode_error, decode_status,
 )
 
-# PDO struct sizes (all INT16)
+# PDO struct sizes (all INT16) per manual V1.0.0
+# NOTE: The EEPROM on some units reports smaller sizes (SM2=18B, SM3=76B)
+# instead of these values. If the slave fails to reach SAFEOP, the EEPROM
+# ESI needs to be updated by Inspire (因时机器人) to match these sizes.
 _INPUT_PDO_SIZE = (6 + 6 + 6 + 6 + 6 + 6 + 6 + 34) * 2   # 76 INT16 = 152 bytes
 _OUTPUT_PDO_SIZE = (1 + 6 + 6 + 6) * 2                      # 19 INT16 = 38 bytes
 
@@ -96,7 +99,9 @@ class InspireHandF1_EtherCAT:
         self._master.state = pysoem.OP_STATE
         self._master.write_state()
 
-        for _ in range(40):
+        for _ in range(200):
+            self._master.send_processdata()
+            self._master.receive_processdata(timeout=2000)
             self._master.state_check(pysoem.OP_STATE, 50_000)
             if self._master.state == pysoem.OP_STATE:
                 break

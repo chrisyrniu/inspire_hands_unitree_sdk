@@ -29,11 +29,12 @@ def main():
     parser.add_argument('--id', type=int, default=1, help='Right hand ID (default: 1)')
     parser.add_argument('--baudrate', type=int, default=115200)
     parser.add_argument('--touch', action='store_true', help='Also read/publish touch data')
+    parser.add_argument('--touch-skip', type=int, default=4,
+                        help='Read touch every N cycles (default: 4)')
     args = parser.parse_args()
 
     print(f"[RIGHT] Starting RS485+DDS driver: port={args.port}, id={args.id}")
 
-    ## Only publish this subset to increase frequency
     states_structure = [
         ('angle_act', 1064, 6, 'short'),
         ('force_act', 1070, 6, 'short'),
@@ -55,9 +56,13 @@ def main():
 
     try:
         while True:
+            if args.touch and call_count % args.touch_skip == 0:
+                handler.read_touch = True
+            else:
+                handler.read_touch = False
+
             data_dict = handler.read()
             call_count += 1
-            time.sleep(0.001)
 
             if call_count % 20 == 0:
                 elapsed = time.perf_counter() - start_time

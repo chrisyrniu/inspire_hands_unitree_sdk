@@ -21,8 +21,8 @@ from inspire_f1_sdk.inspire_dds import inspire_hand_f1_ctrl
 
 # F1 angle register order: [little, ring, middle, index, thumb_bend, thumb_rotate]
 # Ranges (0.1 deg): fingers 900-1740, thumb_bend 1100-1350, thumb_rotate 600-1800
-OPEN  = [1740, 1740, 1740, 1740, 1100, 1800]
-CLOSE = [900,  900,  900,  900,  1350, 600]
+OPEN  = [1740, 1740, 1740, 1740, 1100, 600]
+CLOSE = [900,  900,  900,  900,  1350, 1800]
 
 
 def make_cmd(angles):

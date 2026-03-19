@@ -119,20 +119,49 @@ _TOUCH_FIELD_ORDER = [
 ]
 
 
-def _read_modbus_registers(client, start_address, num_registers, device_id):
+def _read_modbus_registers(client, start_address, num_registers, device_id, lock=None):
     """Read and parse Modbus holding registers (signed INT16)."""
-    with _modbus_lock:
-        response = client.read_holding_registers(start_address, num_registers, slave=device_id)
+    _lock = lock or _modbus_lock
+    with _lock:
+        response = client.read_holding_registers(start_address, count=num_registers, device_id=device_id)
     if response.isError():
         return None
     packed = struct.pack('>' + 'H' * num_registers, *response.registers)
     return list(struct.unpack('>' + 'h' * num_registers, packed))
 
 
-def _read_modbus_registers_unsigned(client, start_address, num_registers, device_id):
+def _merge_contiguous_reads(states_structure):
+    """Merge contiguous register groups into bulk reads.
+
+    Returns a list of (start_address, total_count, [(attr, offset, count)]).
+    """
+    if not states_structure:
+        return []
+
+    sorted_s = sorted(states_structure, key=lambda x: x[1])
+    groups = []
+    cur_start = sorted_s[0][1]
+    cur_end = cur_start + sorted_s[0][2]
+    cur_fields = [(sorted_s[0][0], 0, sorted_s[0][2])]
+
+    for attr, addr, count, dtype in sorted_s[1:]:
+        if addr <= cur_end + 20:
+            cur_fields.append((attr, addr - cur_start, count))
+            cur_end = max(cur_end, addr + count)
+        else:
+            groups.append((cur_start, cur_end - cur_start, cur_fields))
+            cur_start = addr
+            cur_end = addr + count
+            cur_fields = [(attr, 0, count)]
+    groups.append((cur_start, cur_end - cur_start, cur_fields))
+    return groups
+
+
+def _read_modbus_registers_unsigned(client, start_address, num_registers, device_id, lock=None):
     """Read Modbus holding registers as unsigned INT16."""
-    with _modbus_lock:
-        response = client.read_holding_registers(start_address, num_registers, slave=device_id)
+    _lock = lock or _modbus_lock
+    with _lock:
+        response = client.read_holding_registers(start_address, count=num_registers, device_id=device_id)
     if response.isError():
         return None
     return list(response.registers)
@@ -193,6 +222,8 @@ class F1HandDDSHandler:
         self.device_id = device_id
         self.read_touch = read_touch
         self.states_structure = states_structure or _DEFAULT_STATES_STRUCTURE
+        self._bulk_groups = _merge_contiguous_reads(self.states_structure)
+        self._lock = threading.Lock()
 
         self.client = ModbusSerialClient(
             port=serial_port, baudrate=baudrate, bytesize=8,
@@ -210,10 +241,10 @@ class F1HandDDSHandler:
                 print(f"DDS init error: {e}")
                 return
 
-        with _modbus_lock:
-            self.client.write_register(REG_CLEAR_ERROR, 1, slave=self.device_id)
-            self.client.write_registers(REG_SPEED_SET, [2000] * NUM_DOFS, slave=self.device_id)
-            self.client.write_registers(REG_FORCE_SET, [6000] * NUM_DOFS, slave=self.device_id)
+        with self._lock:
+            self.client.write_register(REG_CLEAR_ERROR, 1, device_id=self.device_id)
+            self.client.write_registers(REG_SPEED_SET, [2000] * NUM_DOFS, device_id=self.device_id)
+            self.client.write_registers(REG_FORCE_SET, [6000] * NUM_DOFS, device_id=self.device_id)
 
         self.state_pub = ChannelPublisher(
             "rt/inspire_hand_f1/state/" + LR, inspire_hand_f1_state)
@@ -238,34 +269,35 @@ class F1HandDDSHandler:
         raise ConnectionError("Failed to connect after max retries")
 
     def _ctrl_callback(self, msg: inspire_hand_f1_ctrl):
-        with _modbus_lock:
+        with self._lock:
             if msg.mode & 0b0001:
                 vals = [v & 0xFFFF for v in msg.angle_set]
-                self.client.write_registers(REG_ANGLE_SET, vals, slave=self.device_id)
+                self.client.write_registers(REG_ANGLE_SET, vals, device_id=self.device_id)
             if msg.mode & 0b0010:
                 vals = [v & 0xFFFF for v in msg.pos_set]
-                self.client.write_registers(REG_POS_SET, vals, slave=self.device_id)
+                self.client.write_registers(REG_POS_SET, vals, device_id=self.device_id)
             if msg.mode & 0b0100:
                 vals = [v & 0xFFFF for v in msg.force_set]
-                self.client.write_registers(REG_FORCE_SET, vals, slave=self.device_id)
+                self.client.write_registers(REG_FORCE_SET, vals, device_id=self.device_id)
             if msg.mode & 0b1000:
                 vals = [v & 0xFFFF for v in msg.speed_set]
-                self.client.write_registers(REG_SPEED_SET, vals, slave=self.device_id)
+                self.client.write_registers(REG_SPEED_SET, vals, device_id=self.device_id)
 
     def read(self) -> dict:
         """Read hand state (and optionally touch), publish via DDS, return data."""
         states_msg = _new_state_msg()
-        for attr_name, start_address, length, data_type in self.states_structure:
-            vals = _read_modbus_registers(self.client, start_address, length, self.device_id)
-            if vals is not None:
-                setattr(states_msg, attr_name, vals)
+        for start_addr, total_count, fields in self._bulk_groups:
+            bulk = _read_modbus_registers(self.client, start_addr, total_count, self.device_id, lock=self._lock)
+            if bulk is not None:
+                for attr_name, offset, count in fields:
+                    setattr(states_msg, attr_name, bulk[offset:offset + count])
         self.state_pub.Write(states_msg)
 
         touch_dict = {}
         if self.read_touch:
             touch_msg = _new_touch_msg()
             touch_vals = _read_modbus_registers_unsigned(
-                self.client, REG_TOUCH_BASE, 34, self.device_id)
+                self.client, REG_TOUCH_BASE, 34, self.device_id, lock=self._lock)
             if touch_vals is not None:
                 for i, field in enumerate(_TOUCH_FIELD_ORDER):
                     if i < len(touch_vals):
@@ -343,6 +375,7 @@ class F1HandDDSHandlerDouble:
         self.device_id = device_id  # [left, right]
         self.read_touch = read_touch
         self.states_structure = states_structure or _DEFAULT_STATES_STRUCTURE
+        self._bulk_groups = _merge_contiguous_reads(self.states_structure)
 
         self.client = ModbusSerialClient(
             port=serial_port, baudrate=baudrate, bytesize=8,
@@ -362,9 +395,9 @@ class F1HandDDSHandlerDouble:
 
         for did in self.device_id:
             with _modbus_lock:
-                self.client.write_register(REG_CLEAR_ERROR, 1, slave=did)
-                self.client.write_registers(REG_SPEED_SET, [2000] * NUM_DOFS, slave=did)
-                self.client.write_registers(REG_FORCE_SET, [6000] * NUM_DOFS, slave=did)
+                self.client.write_register(REG_CLEAR_ERROR, 1, device_id=did)
+                self.client.write_registers(REG_SPEED_SET, [2000] * NUM_DOFS, device_id=did)
+                self.client.write_registers(REG_FORCE_SET, [6000] * NUM_DOFS, device_id=did)
 
         # State publishers
         self.state_pub_l = ChannelPublisher(
@@ -404,16 +437,16 @@ class F1HandDDSHandlerDouble:
         with _modbus_lock:
             if msg.mode & 0b0001:
                 vals = [v & 0xFFFF for v in msg.angle_set]
-                self.client.write_registers(REG_ANGLE_SET, vals, slave=device_id)
+                self.client.write_registers(REG_ANGLE_SET, vals, device_id=device_id)
             if msg.mode & 0b0010:
                 vals = [v & 0xFFFF for v in msg.pos_set]
-                self.client.write_registers(REG_POS_SET, vals, slave=device_id)
+                self.client.write_registers(REG_POS_SET, vals, device_id=device_id)
             if msg.mode & 0b0100:
                 vals = [v & 0xFFFF for v in msg.force_set]
-                self.client.write_registers(REG_FORCE_SET, vals, slave=device_id)
+                self.client.write_registers(REG_FORCE_SET, vals, device_id=device_id)
             if msg.mode & 0b1000:
                 vals = [v & 0xFFFF for v in msg.speed_set]
-                self.client.write_registers(REG_SPEED_SET, vals, slave=device_id)
+                self.client.write_registers(REG_SPEED_SET, vals, device_id=device_id)
 
     def _ctrl_callback_l(self, msg: inspire_hand_f1_ctrl):
         self._write_ctrl(msg, self.device_id[0])
@@ -423,10 +456,11 @@ class F1HandDDSHandlerDouble:
 
     def _read_one(self, device_id):
         states_msg = _new_state_msg()
-        for attr_name, start_address, length, data_type in self.states_structure:
-            vals = _read_modbus_registers(self.client, start_address, length, device_id)
-            if vals is not None:
-                setattr(states_msg, attr_name, vals)
+        for start_addr, total_count, fields in self._bulk_groups:
+            bulk = _read_modbus_registers(self.client, start_addr, total_count, device_id)
+            if bulk is not None:
+                for attr_name, offset, count in fields:
+                    setattr(states_msg, attr_name, bulk[offset:offset + count])
 
         touch_dict = {}
         touch_msg = None

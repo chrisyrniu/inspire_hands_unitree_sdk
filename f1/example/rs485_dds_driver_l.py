@@ -26,25 +26,15 @@ from inspire_f1_sdk.dds_handler import F1HandDDSHandler
 def main():
     parser = argparse.ArgumentParser(description='RH56F1 RS485+DDS Driver - LEFT')
     parser.add_argument('--port', type=str, default='/dev/ttyUSB0')
-    parser.add_argument('--id', type=int, default=2, help='Left hand ID (default: 2)')
+    parser.add_argument('--id', type=int, default=1, help='Left hand ID (default: 2)')
     parser.add_argument('--baudrate', type=int, default=115200)
     parser.add_argument('--touch', action='store_true', help='Also read/publish touch data')
+    parser.add_argument('--touch-skip', type=int, default=4,
+                        help='Read touch every N cycles (default: 4)')
     args = parser.parse_args()
 
     print(f"[LEFT] Starting RS485+DDS driver: port={args.port}, id={args.id}")
 
-    ## Publish all data
-    # states_structure = [
-    #     ('pos_act',     1058, 6, 'short'),
-    #     ('angle_act',   1064, 6, 'short'),
-    #     ('force_act',   1070, 6, 'short'),
-    #     ('current',     1076, 6, 'short'),
-    #     ('err',         1082, 6, 'short'),
-    #     ('status',      1088, 6, 'short'),
-    #     ('temperature', 1094, 6, 'short'),
-    # ]
-
-    ## Only publish this subset to increase frequency
     states_structure = [
         ('angle_act', 1064, 6, 'short'),
         ('force_act', 1070, 6, 'short'),
@@ -66,9 +56,13 @@ def main():
 
     try:
         while True:
+            if args.touch and call_count % args.touch_skip == 0:
+                handler.read_touch = True
+            else:
+                handler.read_touch = False
+
             data_dict = handler.read()
             call_count += 1
-            time.sleep(0.001)
 
             if call_count % 20 == 0:
                 elapsed = time.perf_counter() - start_time
