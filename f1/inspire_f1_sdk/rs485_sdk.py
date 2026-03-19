@@ -122,7 +122,7 @@ class InspireHandF1_RS485:
 
     def _modbus_read_registers(self, address: int, count: int) -> Optional[list[int]]:
         with self._lock:
-            resp = self._client.read_holding_registers(address, count, slave=self.hand_id)
+            resp = self._client.read_holding_registers(address, count, device_id=self.hand_id)
         if resp.isError():
             return None
         packed = struct.pack('>' + 'H' * count, *resp.registers)
@@ -130,7 +130,7 @@ class InspireHandF1_RS485:
 
     def _modbus_read_registers_unsigned(self, address: int, count: int) -> Optional[list[int]]:
         with self._lock:
-            resp = self._client.read_holding_registers(address, count, slave=self.hand_id)
+            resp = self._client.read_holding_registers(address, count, device_id=self.hand_id)
         if resp.isError():
             return None
         return list(resp.registers)
@@ -138,11 +138,11 @@ class InspireHandF1_RS485:
     def _modbus_write_registers(self, address: int, values: list[int]):
         unsigned = [v & 0xFFFF for v in values]
         with self._lock:
-            self._client.write_registers(address, unsigned, slave=self.hand_id)
+            self._client.write_registers(address, unsigned, device_id=self.hand_id)
 
     def _modbus_write_register(self, address: int, value: int):
         with self._lock:
-            self._client.write_register(address, value & 0xFFFF, slave=self.hand_id)
+            self._client.write_register(address, value & 0xFFFF, device_id=self.hand_id)
 
     # ──────────────── Low-level: Raw Serial Protocol ─────────────────────────
 
