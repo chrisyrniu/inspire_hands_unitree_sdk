@@ -68,6 +68,7 @@ def main():
 
     call_count = 0
     start_time = time.perf_counter()
+    window_start = start_time
 
     try:
         while True:
@@ -83,15 +84,17 @@ def main():
             call_count += 1
 
             if call_count % 10 == 0:
-                elapsed = time.perf_counter() - start_time
-                freq = call_count / elapsed
-                print(f"  freq: {freq:.2f} Hz, calls: {call_count}, "
-                      f"elapsed: {elapsed:.6f}s")
+                now = time.perf_counter()
+                inst_freq = 10 / (now - window_start)
+                avg_freq = call_count / (now - start_time)
+                print(f"  inst: {inst_freq:.1f} Hz, avg: {avg_freq:.1f} Hz, "
+                      f"calls: {call_count}")
+                window_start = now
 
     except KeyboardInterrupt:
         elapsed = time.perf_counter() - start_time
         freq = call_count / elapsed if elapsed > 0 else 0
-        print(f"Done. calls={call_count}, elapsed={elapsed:.6f}s, freq={freq:.2f} Hz")
+        print(f"Done. calls={call_count}, elapsed={elapsed:.6f}s, avg={freq:.2f} Hz")
     finally:
         handler_l.close()
         handler_r.close()
