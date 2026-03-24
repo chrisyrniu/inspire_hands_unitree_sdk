@@ -11,7 +11,7 @@
     cd unitree_sdk2_python
     pip install -e .
     ```
-* Install inspire hand sdk
+* Install inspire hand sdk of the chosen version (dftp or f1)
     ```bash
     pip install -e .
     ```

@@ -10,6 +10,6 @@ setup(
         'pyserial',
         'pymodbus',
         'pysoem',
-        'cyclonedds',
+        'cyclonedds==0.10.2',
     ],
 )
